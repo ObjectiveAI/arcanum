@@ -1,4 +1,4 @@
-# skills
+# arcanum
 
 Skills for [ObjectiveAI](https://github.com/ObjectiveAI/objectiveai) agents.
 
