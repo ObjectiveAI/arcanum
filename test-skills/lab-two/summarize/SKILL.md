@@ -1,0 +1,1 @@
+Summarize skill: condense text.

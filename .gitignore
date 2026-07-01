@@ -1,1 +1,4 @@
 /target
+
+# Plugin staging tree (populated by build.sh)
+/.objectiveai/

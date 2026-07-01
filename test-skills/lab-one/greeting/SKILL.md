@@ -1,0 +1,1 @@
+Greeting skill: say hello.

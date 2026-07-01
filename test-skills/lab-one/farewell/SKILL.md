@@ -1,0 +1,1 @@
+Farewell skill: say goodbye.

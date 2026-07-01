@@ -1,0 +1,20 @@
+{
+  "owner": "ObjectiveAI",
+  "name": "arcanum",
+  "version": "0.1.0",
+  "description": "Skills for ObjectiveAI agents.",
+  "daemon": false,
+  "exec": {
+    "windows": ["./arcanum.exe"],
+    "linux": ["./arcanum"],
+    "macos": ["./arcanum"]
+  },
+  "cli_zip": {
+    "windows": { "x86_64": "arcanum-windows-x86_64.zip", "aarch64": "arcanum-windows-aarch64.zip" },
+    "linux": { "x86_64": "arcanum-linux-x86_64.zip", "aarch64": "arcanum-linux-aarch64.zip" },
+    "macos": { "x86_64": "arcanum-macos-x86_64.zip", "aarch64": "arcanum-macos-aarch64.zip" }
+  },
+  "mcp_servers": [
+    { "name": "arcanum", "authorization": false }
+  ]
+}
