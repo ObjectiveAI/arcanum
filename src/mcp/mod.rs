@@ -4,7 +4,7 @@
 //! capabilities to ObjectiveAI agents. Add more routers with the `+` operator
 //! in [`ArcanumMcp::new`].
 
-mod common;
+pub(crate) mod common;
 mod list_skills;
 mod load_skill;
 mod run;

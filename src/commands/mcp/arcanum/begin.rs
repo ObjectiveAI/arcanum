@@ -46,14 +46,20 @@ impl Args {
         let lock_dir = ctx.config.state_dir().join("locks");
         let url = objectiveai_sdk::lockfile::wait_read(&lock_dir, "mcp").await?;
 
-        // 3. Register this agent's token-repeat and nudge the daemon's monitor
-        //    (which resumes a subscribe loop only if a baseline already exists).
+        // 3. Refresh this agent's live response id (used by the daemon's monitor
+        //    to re-read the loaded skill) and nudge the monitor with this dial's
+        //    token-repeat. The monitor resumes a loop only if a baseline already
+        //    exists (recovery after a daemon restart).
         let aih = &ctx.config.objectiveai_agent_instance_hierarchy;
         let db = ctx.db().await?;
-        db.upsert_token_repeat(aih, self.token_repeat as i64)
+        if let Some(response_id) = &ctx.config.objectiveai_response_id {
+            db.upsert_response_id(aih, response_id)
+                .await
+                .map_err(std::io::Error::other)?;
+        }
+        db.notify_monitor(aih, self.token_repeat as i64)
             .await
             .map_err(std::io::Error::other)?;
-        db.notify_monitor(aih).await.map_err(std::io::Error::other)?;
 
         // 4. Announce the URL; the host parses this stdout line as `Output::Mcp`.
         let response = Mcp {

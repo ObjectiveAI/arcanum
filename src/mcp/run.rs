@@ -73,6 +73,14 @@ pub async fn run(ctx: Arc<Context>) -> std::io::Result<()> {
     axum::serve(listener, router).await
 }
 
+/// The `arcanum_monitor` NOTIFY payload: which AIH to (re)evaluate and its
+/// `token_repeat` (which isn't persisted).
+#[derive(serde::Deserialize)]
+struct MonitorNotification {
+    aih: String,
+    token_repeat: i64,
+}
+
 /// Background task: LISTEN on the `arcanum_monitor` channel and, for each
 /// notified AIH, ensure its monitor loop is running (started only if a baseline
 /// already exists — see [`MonitorService::ensure`]). Reconnects on error.
@@ -88,7 +96,9 @@ fn spawn_monitor_listener(db: crate::db::Db, monitor: Arc<MonitorService>) {
             };
             // Drain notifications until the connection drops, then reconnect.
             while let Ok(notification) = listener.recv().await {
-                monitor.ensure(notification.payload()).await;
+                if let Ok(n) = serde_json::from_str::<MonitorNotification>(notification.payload()) {
+                    monitor.ensure(&n.aih, n.token_repeat).await;
+                }
             }
         }
     });

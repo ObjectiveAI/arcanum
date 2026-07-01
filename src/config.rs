@@ -20,6 +20,8 @@ struct EnvConfigBuilder {
     objectiveai_agent_instance_hierarchy: Option<String>,
     #[envconfig(from = "OBJECTIVEAI_POSTGRES_URL")]
     postgres_url: Option<String>,
+    #[envconfig(from = "OBJECTIVEAI_RESPONSE_ID")]
+    objectiveai_response_id: Option<String>,
 }
 
 impl EnvConfigBuilder {
@@ -28,6 +30,7 @@ impl EnvConfigBuilder {
             state_dir: self.state_dir,
             objectiveai_agent_instance_hierarchy: self.objectiveai_agent_instance_hierarchy,
             postgres_url: self.postgres_url,
+            objectiveai_response_id: self.objectiveai_response_id,
         }
     }
 }
@@ -37,6 +40,7 @@ pub struct ConfigBuilder {
     pub state_dir: Option<String>,
     pub objectiveai_agent_instance_hierarchy: Option<String>,
     pub postgres_url: Option<String>,
+    pub objectiveai_response_id: Option<String>,
 }
 
 impl Envconfig for ConfigBuilder {
@@ -64,6 +68,7 @@ impl ConfigBuilder {
                 .objectiveai_agent_instance_hierarchy
                 .unwrap_or_else(|| "arcanum".to_string()),
             postgres_url: self.postgres_url.unwrap_or_default(),
+            objectiveai_response_id: self.objectiveai_response_id,
         }
     }
 }
@@ -79,6 +84,11 @@ pub struct Config {
     /// Postgres connection URL (env `OBJECTIVEAI_POSTGRES_URL`) — the store for
     /// the token-usage monitor. Empty when unset; only the DB paths need it.
     pub postgres_url: String,
+    /// The current completion's response id (env `OBJECTIVEAI_RESPONSE_ID`), set
+    /// by the host on each dial. `mcp arcanum begin` records it so the daemon's
+    /// monitor can reach the laboratory to re-read the loaded skill. `None` when
+    /// unset (e.g. `--help`).
+    pub objectiveai_response_id: Option<String>,
 }
 
 impl Config {

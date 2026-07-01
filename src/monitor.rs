@@ -2,10 +2,16 @@
 //!
 //! For each watched agent instance hierarchy (AIH) it loops
 //! `agents logs token-usage subscribe`; whenever the agent's `total_tokens`
-//! grows past its `token_repeat` since the last injection, it re-enqueues the
-//! loaded skill as a `<arcanum>…</arcanum>` message. It keeps subscribing even
-//! with no skill loaded (advancing the baseline quietly) and stops when the
-//! instance goes inactive.
+//! grows past its `token_repeat` since the last injection, it re-reads the
+//! loaded skill fresh from the laboratory and re-enqueues it as a
+//! `<arcanum>…</arcanum>` message. It keeps subscribing even with no skill
+//! loaded (advancing the baseline quietly) and stops when the instance goes
+//! inactive.
+//!
+//! `token_repeat` is not persisted — it's passed in per trigger (begin's NOTIFY
+//! payload or `load_skill`'s header) and captured by the loop. The skill content
+//! is not persisted either — only its reference (lab id + path) is, and it's
+//! re-read on each injection so edits are picked up.
 
 use std::sync::Arc;
 
@@ -20,6 +26,7 @@ use objectiveai_sdk::cli::command::plugin::PluginExecutor;
 use tokio::task::JoinHandle;
 
 use crate::db::Db;
+use crate::mcp::common;
 
 /// Idempotency key for the re-injected skill message: a later injection replaces
 /// any still-queued earlier one for the same agent.
@@ -41,36 +48,37 @@ impl MonitorService {
         })
     }
 
-    /// Start monitoring `aih`, but only if a baseline already exists (the
-    /// begin / reconnect path). No-op if already running or no baseline yet.
-    pub async fn ensure(self: &Arc<Self>, aih: &str) {
+    /// Start monitoring `aih` (with the given `token_repeat`), but only if a
+    /// baseline already exists (the begin / reconnect path). No-op if already
+    /// running or no baseline yet.
+    pub async fn ensure(self: &Arc<Self>, aih: &str, token_repeat: i64) {
         if self.running.contains_key(aih) {
             return;
         }
         if matches!(self.db.last_total_tokens(aih).await, Ok(Some(_))) {
-            self.spawn(aih.to_string());
+            self.spawn(aih.to_string(), token_repeat);
         }
     }
 
     /// Start monitoring `aih` unconditionally (the `load_skill` first-load path).
-    pub fn start(self: &Arc<Self>, aih: &str) {
-        self.spawn(aih.to_string());
+    pub fn start(self: &Arc<Self>, aih: &str, token_repeat: i64) {
+        self.spawn(aih.to_string(), token_repeat);
     }
 
     /// Spawn the loop for `aih` iff one isn't already running (atomic via the
     /// DashMap entry lock). The task removes itself from the registry on exit.
-    fn spawn(self: &Arc<Self>, aih: String) {
+    fn spawn(self: &Arc<Self>, aih: String, token_repeat: i64) {
         if let Entry::Vacant(slot) = self.running.entry(aih.clone()) {
             let this = self.clone();
             let handle = tokio::spawn(async move {
-                this.run_loop(&aih).await;
+                this.run_loop(&aih, token_repeat).await;
                 this.running.remove(&aih);
             });
             slot.insert(handle);
         }
     }
 
-    async fn run_loop(&self, aih: &str) {
+    async fn run_loop(&self, aih: &str, token_repeat: i64) {
         // `base` is the persisted injection baseline; `seen` is the subscribe
         // cursor (advances every tick so the loop never busy-spins).
         let mut base = self.db.last_total_tokens(aih).await.ok().flatten();
@@ -86,15 +94,26 @@ impl MonitorService {
                 None => break, // executor error / stream ended
             };
             seen = Some(new);
-            let repeat = self.db.token_repeat(aih).await.ok().flatten().unwrap_or(i64::MAX);
-            match self.db.skill_content(aih).await.ok().flatten() {
-                // A skill is loaded and usage grew past the threshold → inject.
-                Some(skill) if base.map_or(true, |b| new - b > repeat) => {
-                    tokio::join!(
-                        self.enqueue(aih, &skill),
-                        async { let _ = self.db.set_last_total_tokens(aih, new).await; },
-                    );
-                    base = Some(new);
+            let over_threshold = base.map_or(true, |b| new - b > token_repeat);
+            match self.db.skill_ref(aih).await.ok().flatten() {
+                // A skill is loaded and usage grew past the threshold → re-read
+                // the skill fresh and inject. On a read failure, leave `base`
+                // put so the next tick retries (but `seen` advanced, so no spin).
+                Some(skill) if over_threshold => {
+                    if let Some(content) = common::read_skill_md(
+                        &self.executor,
+                        &skill.response_id,
+                        &skill.laboratory_id,
+                        &skill.skill_path,
+                    )
+                    .await
+                    {
+                        tokio::join!(
+                            self.enqueue(aih, &content),
+                            async { let _ = self.db.set_last_total_tokens(aih, new).await; },
+                        );
+                        base = Some(new);
+                    }
                 }
                 // No skill loaded → advance the baseline quietly (no injection).
                 None => {
@@ -145,7 +164,7 @@ impl MonitorService {
         })
     }
 
-    /// Enqueue the loaded skill as a `<arcanum>…</arcanum>` message to `aih`.
+    /// Enqueue `skill_content` as a `<arcanum>…</arcanum>` message to `aih`.
     pub async fn enqueue(&self, aih: &str, skill_content: &str) {
         let (parent, instance) = match aih.rsplit_once('/') {
             Some((p, i)) => (Some(p.to_string()), i.to_string()),

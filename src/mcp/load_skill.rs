@@ -38,45 +38,32 @@ impl ArcanumMcp {
         let aih = common::required_header(&ctx.extensions, AIH_HEADER)?;
         let token_repeat = common::token_repeat(&ctx.extensions)? as i64;
 
-        // Resolve the laboratory's MCP server, then read its SKILL.md.
-        let servers = common::list_servers(&self.context.executor, &response_id).await?;
-        let server = servers
-            .iter()
-            .find(|s| common::laboratory_id(s) == Some(req.laboratory_id.as_str()))
-            .ok_or_else(|| {
-                ErrorData::invalid_params(
-                    format!("no laboratory with id {}", req.laboratory_id),
-                    None,
-                )
-            })?;
-        let bash = common::bash_tool(server);
-        // Locate the SKILL.md (case-insensitive) directly under `path` and cat it.
-        let command = format!(
-            "f=$(find {path} -maxdepth 1 -iname 'SKILL.md' 2>/dev/null | head -1); [ -n \"$f\" ] && cat \"$f\"",
-            path = shell_single_quote(&req.path),
-        );
-        let content = common::lab_bash(&self.context.executor, &response_id, &bash, &command)
-            .await
-            .ok_or_else(|| {
-                ErrorData::internal_error("failed to read SKILL.md over the laboratory", None)
-            })?;
-        let content = content.trim_end_matches('\n').to_string();
-        if content.is_empty() {
-            return Err(ErrorData::invalid_params(
-                format!("no SKILL.md found at {}", req.path),
+        // Read the skill's SKILL.md over the laboratory connection.
+        let content = common::read_skill_md(
+            &self.context.executor,
+            &response_id,
+            &req.laboratory_id,
+            &req.path,
+        )
+        .await
+        .ok_or_else(|| {
+            ErrorData::invalid_params(
+                format!("no SKILL.md at {} in laboratory {}", req.path, req.laboratory_id),
                 None,
-            ));
-        }
+            )
+        })?;
 
-        // Register the loaded skill; on the FIRST load (no baseline yet) inject
-        // immediately and establish the baseline, then start the monitor loop.
+        // Register the loaded skill's reference + this response id (the monitor
+        // re-reads the content fresh on each injection). On the FIRST load (no
+        // baseline yet) inject immediately and establish the baseline, then start
+        // the monitor loop.
         let db = self
             .context
             .db()
             .await
             .map_err(|e| ErrorData::internal_error(format!("db: {e}"), None))?;
         let had_baseline = db.last_total_tokens(&aih).await.ok().flatten().is_some();
-        db.set_skill_content(&aih, token_repeat, &content)
+        db.set_skill(&aih, &req.laboratory_id, &req.path, &response_id)
             .await
             .map_err(|e| ErrorData::internal_error(format!("db: {e}"), None))?;
 
@@ -85,13 +72,8 @@ impl ArcanumMcp {
             let baseline = self.monitor.token_usage_get(&aih).await.unwrap_or(0);
             let _ = db.set_last_total_tokens(&aih, baseline).await;
         }
-        self.monitor.start(&aih);
+        self.monitor.start(&aih, token_repeat);
 
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }
-}
-
-/// Single-quote a string for safe embedding in a bash command.
-fn shell_single_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }

@@ -4,6 +4,10 @@
 //! Connected lazily from [`Context`](crate::context::Context) (only the daemon,
 //! `mcp arcanum begin`, and `load_skill` touch it). Runtime queries only — no
 //! compile-time macros, so no `DATABASE_URL` is needed at build time.
+//!
+//! Persists only the injection baseline, the loaded skill's *reference*
+//! (laboratory id + path), and the agent's latest response id. `token_repeat`
+//! and the skill content are intentionally not stored.
 
 use sqlx::postgres::{PgListener, PgPool, PgPoolOptions};
 
@@ -12,6 +16,13 @@ const SCHEMA: &str = include_str!("schema.sql");
 
 /// The Postgres NOTIFY channel `mcp arcanum begin` pings and the daemon LISTENs.
 pub const MONITOR_CHANNEL: &str = "arcanum_monitor";
+
+/// The loaded skill's reference plus the response id used to re-read it.
+pub struct SkillRef {
+    pub laboratory_id: String,
+    pub skill_path: String,
+    pub response_id: String,
+}
 
 /// Cloneable handle to the Postgres pool. Clone is cheap (the pool is `Arc`).
 #[derive(Clone)]
@@ -31,25 +42,63 @@ impl Db {
         Ok(Self { pool })
     }
 
-    /// Record (or refresh) an agent's `token_repeat`, creating the row if new.
-    pub async fn upsert_token_repeat(&self, aih: &str, token_repeat: i64) -> Result<(), sqlx::Error> {
+    /// Record (or refresh) the agent's latest response id, creating the row if new.
+    pub async fn upsert_response_id(&self, aih: &str, response_id: &str) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO arcanum_agents (agent_instance_hierarchy, token_repeat) VALUES ($1, $2) \
-             ON CONFLICT (agent_instance_hierarchy) DO UPDATE SET token_repeat = excluded.token_repeat",
+            "INSERT INTO arcanum_agents (agent_instance_hierarchy, response_id) VALUES ($1, $2) \
+             ON CONFLICT (agent_instance_hierarchy) DO UPDATE SET response_id = excluded.response_id",
         )
         .bind(aih)
-        .bind(token_repeat)
+        .bind(response_id)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
-    /// The agent's `token_repeat`, or `None` if the row is absent.
-    pub async fn token_repeat(&self, aih: &str) -> Result<Option<i64>, sqlx::Error> {
-        sqlx::query_scalar("SELECT token_repeat FROM arcanum_agents WHERE agent_instance_hierarchy = $1")
-            .bind(aih)
-            .fetch_optional(&self.pool)
-            .await
+    /// Set the loaded skill reference + response id, creating the row if new.
+    pub async fn set_skill(
+        &self,
+        aih: &str,
+        laboratory_id: &str,
+        skill_path: &str,
+        response_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO arcanum_agents \
+                 (agent_instance_hierarchy, laboratory_id, skill_path, response_id) \
+             VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (agent_instance_hierarchy) DO UPDATE SET \
+                 laboratory_id = excluded.laboratory_id, \
+                 skill_path = excluded.skill_path, \
+                 response_id = excluded.response_id",
+        )
+        .bind(aih)
+        .bind(laboratory_id)
+        .bind(skill_path)
+        .bind(response_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// The loaded skill reference, or `None` if no skill is loaded (or the
+    /// response id is missing).
+    pub async fn skill_ref(&self, aih: &str) -> Result<Option<SkillRef>, sqlx::Error> {
+        let row: Option<(Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT laboratory_id, skill_path, response_id \
+             FROM arcanum_agents WHERE agent_instance_hierarchy = $1",
+        )
+        .bind(aih)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(match row {
+            Some((Some(laboratory_id), Some(skill_path), Some(response_id))) => Some(SkillRef {
+                laboratory_id,
+                skill_path,
+                response_id,
+            }),
+            _ => None,
+        })
     }
 
     /// The injection baseline, or `None` if the row is absent OR the column is NULL.
@@ -73,38 +122,6 @@ impl Db {
         Ok(())
     }
 
-    /// The currently loaded skill content, or `None` if absent/unloaded.
-    pub async fn skill_content(&self, aih: &str) -> Result<Option<String>, sqlx::Error> {
-        let row: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT skill_content FROM arcanum_agents WHERE agent_instance_hierarchy = $1",
-        )
-        .bind(aih)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.flatten())
-    }
-
-    /// Upsert the loaded skill content, creating the row (with `token_repeat`) if new.
-    pub async fn set_skill_content(
-        &self,
-        aih: &str,
-        token_repeat: i64,
-        content: &str,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            "INSERT INTO arcanum_agents (agent_instance_hierarchy, token_repeat, skill_content) \
-             VALUES ($1, $2, $3) \
-             ON CONFLICT (agent_instance_hierarchy) \
-             DO UPDATE SET token_repeat = excluded.token_repeat, skill_content = excluded.skill_content",
-        )
-        .bind(aih)
-        .bind(token_repeat)
-        .bind(content)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     /// Drop an agent's row (the agent instance went inactive).
     pub async fn delete(&self, aih: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM arcanum_agents WHERE agent_instance_hierarchy = $1")
@@ -114,11 +131,13 @@ impl Db {
         Ok(())
     }
 
-    /// NOTIFY the daemon that `aih` should be (re)evaluated for monitoring.
-    pub async fn notify_monitor(&self, aih: &str) -> Result<(), sqlx::Error> {
+    /// NOTIFY the daemon that `aih` should be (re)evaluated for monitoring, with
+    /// the agent's `token_repeat` (carried in the payload — it isn't persisted).
+    pub async fn notify_monitor(&self, aih: &str, token_repeat: i64) -> Result<(), sqlx::Error> {
+        let payload = serde_json::json!({ "aih": aih, "token_repeat": token_repeat }).to_string();
         sqlx::query("SELECT pg_notify($1, $2)")
             .bind(MONITOR_CHANNEL)
-            .bind(aih)
+            .bind(payload)
             .execute(&self.pool)
             .await?;
         Ok(())

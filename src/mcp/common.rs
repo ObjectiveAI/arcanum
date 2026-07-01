@@ -145,3 +145,29 @@ pub async fn lab_bash(
     let parsed: BashOut = serde_json::from_str(&text).ok()?;
     Some(parsed.stdout)
 }
+
+/// Read the `SKILL.md` (case-insensitive) directly under `path` in laboratory
+/// `lab_id`, via the agent's live `response_id`. Returns the trimmed content, or
+/// `None` if the lab isn't connected / the file is missing / the read fails.
+pub async fn read_skill_md(
+    executor: &PluginExecutor,
+    response_id: &str,
+    lab_id: &str,
+    path: &str,
+) -> Option<String> {
+    let servers = list_servers(executor, response_id).await.ok()?;
+    let server = servers.iter().find(|s| laboratory_id(s) == Some(lab_id))?;
+    let tool = bash_tool(server);
+    let command = format!(
+        "f=$(find {path} -maxdepth 1 -iname 'SKILL.md' 2>/dev/null | head -1); [ -n \"$f\" ] && cat \"$f\"",
+        path = shell_single_quote(path),
+    );
+    let content = lab_bash(executor, response_id, &tool, &command).await?;
+    let content = content.trim_end_matches('\n');
+    (!content.is_empty()).then(|| content.to_string())
+}
+
+/// Single-quote a string for safe embedding in a bash command.
+pub fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
