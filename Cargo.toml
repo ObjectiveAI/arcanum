@@ -15,12 +15,12 @@ indexmap = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1.2.1"
-objectiveai-sdk = { version = "2.2.8", features = ["lockfile"] }
+objectiveai-sdk = { version = "2.2.9", features = ["lockfile"] }
 dotenv = "0.15.0"
 envconfig = "0.11.1"
 
 [dev-dependencies]
-objectiveai-sdk = { version = "2.2.8", features = ["cli", "cli-executor"] }
+objectiveai-sdk = { version = "2.2.9", features = ["cli", "cli-executor"] }
 tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "process", "net"] }
 futures = "0.3"
 serde_json = "1"
