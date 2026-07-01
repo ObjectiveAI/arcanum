@@ -6,11 +6,12 @@
 //! executor's `agents mcp tools call` and run a `find`, then parse the result.
 
 use futures::future::join_all;
+use indexmap::IndexMap;
 use objectiveai_sdk::cli::command::agents::mcp::servers::list as servers_list;
 use objectiveai_sdk::cli::command::agents::mcp::tools::call as tools_call;
 use objectiveai_sdk::cli::command::plugin::PluginExecutor;
 use objectiveai_sdk::laboratories::Laboratory;
-use objectiveai_sdk::mcp::tool::ContentBlock;
+use objectiveai_sdk::mcp::tool::{CallToolRequestParams, ContentBlock};
 use rmcp::{
     ErrorData, RoleServer, tool, tool_router,
     model::{CallToolResult, Content, Extensions},
@@ -122,10 +123,15 @@ impl ArcanumMcp {
 /// Call a laboratory's `Bash` tool with [`FIND_CMD`] and return its stdout, or
 /// `None` on any failure (executor error, no text block, unparseable JSON).
 async fn run_find(executor: &PluginExecutor, response_id: &str, tool: &str) -> Option<String> {
-    let params: objectiveai_sdk::mcp::tool::CallToolRequestParams = serde_json::from_value(
-        serde_json::json!({ "name": tool, "arguments": { "command": FIND_CMD } }),
-    )
-    .ok()?;
+    let params = CallToolRequestParams {
+        name: tool.to_string(),
+        arguments: Some(IndexMap::from([(
+            "command".to_string(),
+            serde_json::Value::String(FIND_CMD.to_string()),
+        )])),
+        _meta: None,
+        task: None,
+    };
     let result = tools_call::execute(
         executor,
         tools_call::Request {

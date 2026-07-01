@@ -173,6 +173,7 @@ dependencies = [
  "envconfig",
  "futures",
  "http",
+ "indexmap",
  "objectiveai-sdk",
  "rmcp",
  "schemars",
