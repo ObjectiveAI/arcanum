@@ -1,4 +1,4 @@
-//! The `mcp arcanum` command group.
+//! The `daemon` command group.
 
 mod begin;
 
@@ -10,7 +10,7 @@ use crate::context::Context;
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Launch the MCP server (via the daemon) and announce its URL.
+    /// Launch the MCP server.
     Begin(begin::Args),
 }
 

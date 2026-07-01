@@ -3,7 +3,7 @@
   "name": "arcanum",
   "version": "0.1.0",
   "description": "Skills for ObjectiveAI agents.",
-  "daemon": false,
+  "daemon": true,
   "exec": {
     "windows": ["./arcanum.exe"],
     "linux": ["./arcanum"],
