@@ -171,6 +171,8 @@ dependencies = [
  "clap",
  "dotenv",
  "envconfig",
+ "futures",
+ "http",
  "objectiveai-sdk",
  "rmcp",
  "schemars",

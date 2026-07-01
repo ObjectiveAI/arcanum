@@ -5,6 +5,7 @@
 //! now; add more routers with the `+` operator in [`ArcanumMcp::new`].
 
 mod hello;
+mod list_skills;
 mod run;
 
 use std::sync::Arc;
@@ -25,15 +26,14 @@ pub use run::run;
 pub struct ArcanumMcp {
     pub tool_router: ToolRouter<Self>,
     /// The runtime context (config + plugin executor), shared across all session
-    /// clones. Retained for future tools.
-    #[allow(dead_code)]
+    /// clones. `list_skills` reads `context.executor`.
     context: Arc<Context>,
 }
 
 impl ArcanumMcp {
     pub fn new(context: Arc<Context>) -> Self {
         Self {
-            tool_router: Self::hello_tools(),
+            tool_router: Self::hello_tools() + Self::list_skills_tools(),
             context,
         }
     }
