@@ -18,6 +18,8 @@ struct EnvConfigBuilder {
     state_dir: Option<String>,
     #[envconfig(from = "OBJECTIVEAI_AGENT_INSTANCE_HIERARCHY")]
     objectiveai_agent_instance_hierarchy: Option<String>,
+    #[envconfig(from = "OBJECTIVEAI_POSTGRES_URL")]
+    postgres_url: Option<String>,
 }
 
 impl EnvConfigBuilder {
@@ -25,6 +27,7 @@ impl EnvConfigBuilder {
         ConfigBuilder {
             state_dir: self.state_dir,
             objectiveai_agent_instance_hierarchy: self.objectiveai_agent_instance_hierarchy,
+            postgres_url: self.postgres_url,
         }
     }
 }
@@ -33,6 +36,7 @@ impl EnvConfigBuilder {
 pub struct ConfigBuilder {
     pub state_dir: Option<String>,
     pub objectiveai_agent_instance_hierarchy: Option<String>,
+    pub postgres_url: Option<String>,
 }
 
 impl Envconfig for ConfigBuilder {
@@ -59,6 +63,7 @@ impl ConfigBuilder {
             objectiveai_agent_instance_hierarchy: self
                 .objectiveai_agent_instance_hierarchy
                 .unwrap_or_else(|| "arcanum".to_string()),
+            postgres_url: self.postgres_url.unwrap_or_default(),
         }
     }
 }
@@ -71,6 +76,9 @@ pub struct Config {
     /// This agent instance's hierarchy (env
     /// `OBJECTIVEAI_AGENT_INSTANCE_HIERARCHY`). Defaults to `"arcanum"`.
     pub objectiveai_agent_instance_hierarchy: String,
+    /// Postgres connection URL (env `OBJECTIVEAI_POSTGRES_URL`) — the store for
+    /// the token-usage monitor. Empty when unset; only the DB paths need it.
+    pub postgres_url: String,
 }
 
 impl Config {

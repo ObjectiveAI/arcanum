@@ -39,11 +39,19 @@ fn objectiveai_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".objectiveai")
 }
 
-/// The mock-agent spec that puts the arcanum plugin in the arsenal and scripts a
-/// single `arcanum_list_skills` call. Laboratories are attached to the tag
-/// separately (see [`Host::attach_lab`]), so they resolve into the session and
-/// `list_skills` finds them.
-pub fn arcanum_agent() -> Value {
+/// One scripted mock tool-call turn: call `name` with `arguments` (the mock
+/// wants arguments as a JSON *string*).
+pub fn tool_call(name: &str, arguments: Value) -> Value {
+    json!({ "tool_calls": [ { "name": name, "arguments": arguments.to_string() } ], "content": "" })
+}
+
+/// Build the arcanum mock-agent spec running the given scripted tool-call turns.
+/// Puts the arcanum plugin in the arsenal (with a large `token-repeat`, so the
+/// growth-driven re-injection never fires mid-test) and appends a terminating
+/// content-only turn so the mock completion ends cleanly.
+pub fn arcanum_agent_with_calls(calls: Vec<Value>) -> Value {
+    let mut calls = calls;
+    calls.push(json!({ "tool_calls": [], "content": "done" }));
     json!({
         "upstream": "mock",
         "output_mode": "instruction",
@@ -52,16 +60,17 @@ pub fn arcanum_agent() -> Value {
             {
                 "owner": "ObjectiveAI", "name": "arcanum", "version": "0.1.0",
                 "executable": false,
-                "mcp_servers": [ { "name": "arcanum", "arguments": {} } ],
+                "mcp_servers": [ { "name": "arcanum", "arguments": { "token-repeat": "1000000" } } ],
             }
         ]},
-        "calls": [
-            { "tool_calls": [ { "name": "arcanum_list_skills", "arguments": "{}" } ], "content": "" },
-            // Trailing content-only turn so the mock completion terminates after
-            // the single tool call instead of looping / hallucinating more calls.
-            { "tool_calls": [], "content": "done" }
-        ]
+        "calls": calls,
     })
+}
+
+/// The default agent: a single `arcanum_list_skills` call. Laboratories are
+/// attached to the tag separately (see [`Host::attach_lab`]).
+pub fn arcanum_agent() -> Value {
+    arcanum_agent_with_calls(vec![tool_call("arcanum_list_skills", json!({}))])
 }
 
 /// Drives arcanum against one isolated objectiveai state.
@@ -221,6 +230,25 @@ impl Host {
             .execute_one(db_query::Request {
                 path_type: db_query::Path::DbQuery,
                 query: sql,
+                base: Default::default(),
+            })
+            .await;
+        resp.rows
+            .into_iter()
+            .filter_map(|mut row| row.pop())
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Every queued message text in this state (e.g. arcanum's skill injections).
+    pub async fn message_texts(&self) -> Vec<String> {
+        let resp: db_query::Response = self
+            .execute_one(db_query::Request {
+                path_type: db_query::Path::DbQuery,
+                query: "SELECT text FROM objectiveai.message_queue_texts".to_string(),
                 base: Default::default(),
             })
             .await;

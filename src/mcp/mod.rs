@@ -4,7 +4,9 @@
 //! capabilities to ObjectiveAI agents. Add more routers with the `+` operator
 //! in [`ArcanumMcp::new`].
 
+mod common;
 mod list_skills;
+mod load_skill;
 mod run;
 
 use std::sync::Arc;
@@ -16,6 +18,7 @@ use rmcp::{
 };
 
 use crate::context::Context;
+use crate::monitor::MonitorService;
 
 pub use run::run;
 
@@ -24,16 +27,20 @@ pub use run::run;
 #[derive(Clone)]
 pub struct ArcanumMcp {
     pub tool_router: ToolRouter<Self>,
-    /// The runtime context (config + plugin executor), shared across all session
-    /// clones. `list_skills` reads `context.executor`.
+    /// The runtime context (config + plugin executor + lazy DB), shared across
+    /// all session clones. `list_skills`/`load_skill` read `context.executor`.
     context: Arc<Context>,
+    /// The daemon's token-usage monitor, shared with the LISTEN task.
+    /// `load_skill` registers loaded skills and starts monitor loops through it.
+    monitor: Arc<MonitorService>,
 }
 
 impl ArcanumMcp {
-    pub fn new(context: Arc<Context>) -> Self {
+    pub fn new(context: Arc<Context>, monitor: Arc<MonitorService>) -> Self {
         Self {
-            tool_router: Self::list_skills_tools(),
+            tool_router: Self::list_skills_tools() + Self::load_skill_tools(),
             context,
+            monitor,
         }
     }
 }

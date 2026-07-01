@@ -3,6 +3,7 @@
 //! shared by every agent.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -10,17 +11,25 @@ use rmcp::transport::streamable_http_server::{
 
 use super::ArcanumMcp;
 use crate::context::Context;
+use crate::monitor::MonitorService;
 
-/// Run the MCP server until process death.
+/// Run the MCP server (and the token-usage monitor service) until process death.
 ///
 /// Binds an OS-assigned port on loopback (`127.0.0.1:0`), publishes the
 /// resulting `http://<addr>` into `<state_dir>/locks` under key `"mcp"` for the
 /// launcher (`mcp arcanum begin`) to discover, then serves. Produces no
-/// stdout/stderr — the lockfile is the only side channel.
+/// stdout/stderr — the lockfile is the only side channel. Alongside the server
+/// it runs a Postgres `LISTEN` loop that (re)starts a per-agent monitor whenever
+/// `mcp arcanum begin` NOTIFYs.
 pub async fn run(ctx: Arc<Context>) -> std::io::Result<()> {
     let lock_dir = ctx.config.state_dir().join("locks");
 
-    let server = ArcanumMcp::new(ctx);
+    // Connect the DB and build the monitor service (shared with the server).
+    let db = ctx.db().await?.clone();
+    let monitor = MonitorService::new(db.clone(), ctx.executor.clone());
+    spawn_monitor_listener(db, monitor.clone());
+
+    let server = ArcanumMcp::new(ctx, monitor);
     let service = StreamableHttpService::new(
         move || Ok(server.clone()),
         Arc::new(LocalSessionManager::default()),
@@ -62,4 +71,25 @@ pub async fn run(ctx: Arc<Context>) -> std::io::Result<()> {
     }
 
     axum::serve(listener, router).await
+}
+
+/// Background task: LISTEN on the `arcanum_monitor` channel and, for each
+/// notified AIH, ensure its monitor loop is running (started only if a baseline
+/// already exists — see [`MonitorService::ensure`]). Reconnects on error.
+fn spawn_monitor_listener(db: crate::db::Db, monitor: Arc<MonitorService>) {
+    tokio::spawn(async move {
+        loop {
+            let mut listener = match db.monitor_listener().await {
+                Ok(l) => l,
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            // Drain notifications until the connection drops, then reconnect.
+            while let Ok(notification) = listener.recv().await {
+                monitor.ensure(notification.payload()).await;
+            }
+        }
+    });
 }

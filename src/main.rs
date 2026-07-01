@@ -1,7 +1,9 @@
 mod commands;
 mod config;
 mod context;
+mod db;
 mod mcp;
+mod monitor;
 
 use std::sync::Arc;
 
