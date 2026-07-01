@@ -1,10 +1,9 @@
 //! The arcanum agent-facing MCP server.
 //!
 //! A streamable-HTTP `rmcp` server whose tool routers expose the plugin's
-//! capabilities to ObjectiveAI agents. Only the `hello` toolset is wired in for
-//! now; add more routers with the `+` operator in [`ArcanumMcp::new`].
+//! capabilities to ObjectiveAI agents. Add more routers with the `+` operator
+//! in [`ArcanumMcp::new`].
 
-mod hello;
 mod list_skills;
 mod run;
 
@@ -33,7 +32,7 @@ pub struct ArcanumMcp {
 impl ArcanumMcp {
     pub fn new(context: Arc<Context>) -> Self {
         Self {
-            tool_router: Self::hello_tools() + Self::list_skills_tools(),
+            tool_router: Self::list_skills_tools(),
             context,
         }
     }
@@ -47,7 +46,7 @@ impl ServerHandler for ArcanumMcp {
         let mut info = ServerInfo::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         // The host's MCP proxy prefixes agent-visible tool names with this
-        // `serverInfo.name` (so `hello` surfaces as `arcanum_hello`).
+        // `serverInfo.name` (so `list_skills` surfaces as `arcanum_list_skills`).
         info.server_info.name = "arcanum".into();
         info
     }
